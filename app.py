@@ -7,7 +7,6 @@
 import warnings
 warnings.filterwarnings("ignore")
 
-import os
 import joblib
 import numpy as np
 import pandas as pd
@@ -15,7 +14,6 @@ import streamlit as st
 import torch
 
 from rdkit import Chem
-from rdkit.Chem import Draw
 
 from torch_geometric.utils.smiles import from_smiles
 from torch_geometric.data import Batch
@@ -47,15 +45,13 @@ st.title("🧪 Hybrid GNN Solvation Free Energy Predictor")
 
 st.write(
     """
-Predict ΔG using
-
-• Graph Neural Network
-
-• RDKit Molecular Descriptors
-
-• Solute + Solvent SMILES
+Predict **Solvation Free Energy (ΔG)** using a
+Hybrid Graph Neural Network (GAT + GraphSAGE)
+combined with RDKit molecular descriptors.
 """
 )
+
+st.markdown("---")
 
 
 # ==========================================================
@@ -72,41 +68,33 @@ device = torch.device(
 
 )
 
+st.sidebar.success(f"Running on: {device}")
+
 
 # ==========================================================
-# CACHE MODEL
+# LOAD MODEL
 # ==========================================================
 
 @st.cache_resource
 def load_everything():
 
-    # ---------------------------------------------
-    # Model configuration
-    # ---------------------------------------------
-
     config = joblib.load(
-        "model_config.pkl"
-    )
 
-    # ---------------------------------------------
-    # Feature order
-    # ---------------------------------------------
+        "model_config.pkl"
+
+    )
 
     feature_order = joblib.load(
-        "feature_order.pkl"
-    )
 
-    # ---------------------------------------------
-    # Scaler
-    # ---------------------------------------------
+        "feature_order.pkl"
+
+    )
 
     scaler = joblib.load(
-        "scaler.pkl"
-    )
 
-    # ---------------------------------------------
-    # Build model
-    # ---------------------------------------------
+        "scaler.pkl"
+
+    )
 
     model = Model(
 
@@ -120,21 +108,41 @@ def load_everything():
 
     )
 
-    state_dict = torch.load(
+    checkpoint = torch.load(
 
         "best_model.pt",
 
         map_location=device,
 
-        weights_only=True
+        weights_only=False
 
     )
 
-    model.load_state_dict(
+    if isinstance(checkpoint, dict):
 
-        state_dict
+        if "model_state_dict" in checkpoint:
 
-    )
+            model.load_state_dict(
+
+                checkpoint["model_state_dict"]
+
+            )
+
+        else:
+
+            model.load_state_dict(
+
+                checkpoint
+
+            )
+
+    else:
+
+        model.load_state_dict(
+
+            checkpoint
+
+        )
 
     model.to(device)
 
@@ -155,23 +163,29 @@ model, scaler, feature_order = load_everything()
 
 
 # ==========================================================
-# GRAPH CREATION
+# GRAPH FUNCTIONS
 # ==========================================================
 
 def smiles_to_graph(smiles):
 
-    graph = from_smiles(smiles)
+    graph = from_smiles(
+
+        smiles
+
+    )
 
     graph.x = graph.x.float()
 
     return graph
 
 
-# ==========================================================
-# BATCH GRAPH
-# ==========================================================
+def create_batch(
 
-def create_batch(solute_smiles, solvent_smiles):
+    solute_smiles,
+
+    solvent_smiles
+
+):
 
     g1 = smiles_to_graph(
 
@@ -195,40 +209,39 @@ def create_batch(solute_smiles, solvent_smiles):
 
 
 # ==========================================================
-# RDKIT IMAGE
+# SMILES VALIDATION
 # ==========================================================
 
-def molecule_image(smiles):
+def valid_smiles(smiles):
 
-    mol = Chem.MolFromSmiles(
+    try:
 
-        smiles
+        mol = Chem.MolFromSmiles(
 
-    )
+            smiles
 
-    if mol is None:
+        )
 
-        return None
+        return mol is not None
 
-    return Draw.MolToImage(
+    except:
 
-        mol,
-
-        size=(300,300)
-
-    )
+        return False
 # ==========================================================
 # PART 2
 # FEATURE PREPROCESSING + PREDICTION
 # ==========================================================
 
 # ==========================================================
-# FEATURE PREPROCESSING
+# PREPARE FEATURES
 # ==========================================================
 
 def prepare_features(
+
     solute_smiles,
+
     solvent_smiles
+
 ):
 
     # ---------------------------------------------
@@ -248,7 +261,7 @@ def prepare_features(
         return None
 
     # ---------------------------------------------
-    # Convert to dataframe
+    # Convert to DataFrame
     # ---------------------------------------------
 
     df = pd.DataFrame(
@@ -302,7 +315,7 @@ def prepare_features(
     df = df[feature_order]
 
     # ---------------------------------------------
-    # Replace NaN
+    # Replace NaN & Inf
     # ---------------------------------------------
 
     df = df.replace(
@@ -373,7 +386,7 @@ def predict_deltaG(
         g2 = g2.to(device)
 
         # -----------------------------------------
-        # Descriptor vector
+        # Descriptor Features
         # -----------------------------------------
 
         X = prepare_features(
@@ -404,7 +417,21 @@ def predict_deltaG(
 
         with torch.no_grad():
 
-            with torch.amp.autocast("cuda"):
+            if device.type == "cuda":
+
+                with torch.amp.autocast("cuda"):
+
+                    pred = model(
+
+                        g1,
+
+                        g2,
+
+                        X
+
+                    )
+
+            else:
 
                 pred = model(
 
@@ -418,7 +445,7 @@ def predict_deltaG(
 
         return float(
 
-            pred.cpu().item()
+            pred.squeeze().cpu().item()
 
         )
 
@@ -426,7 +453,7 @@ def predict_deltaG(
 
         st.error(
 
-            str(e)
+            f"Prediction Error: {e}"
 
         )
 
@@ -434,62 +461,96 @@ def predict_deltaG(
 
 
 # ==========================================================
-# SMILES VALIDATION
+# CSV VALIDATION
 # ==========================================================
 
-def valid_smiles(smiles):
+def validate_csv(df):
 
-    try:
+    required = [
 
-        mol = Chem.MolFromSmiles(
+        "mol_solute",
 
-            smiles
+        "mol_solvent"
+
+    ]
+
+    missing = [
+
+        col
+
+        for col in required
+
+        if col not in df.columns
+
+    ]
+
+    if len(missing) > 0:
+
+        return False, missing
+
+    return True, []
+
+
+# ==========================================================
+# BATCH PREDICTION
+# ==========================================================
+
+def batch_predict(df):
+
+    predictions = []
+
+    progress = st.progress(0)
+
+    total = len(df)
+
+    for i, row in enumerate(df.itertuples()):
+
+        pred = predict_deltaG(
+
+            str(row.mol_solute),
+
+            str(row.mol_solvent)
 
         )
 
-        return mol is not None
+        predictions.append(pred)
 
-    except:
+        progress.progress(
 
-        return False
+            (i + 1) / total
+
+        )
+
+    df["Predicted_DeltaG"] = predictions
+
+    return df
+
 # ==========================================================
 # PART 3
-# STREAMLIT USER INTERFACE
+# STREAMLIT UI
 # ==========================================================
 
-st.sidebar.header("Model Information")
+st.markdown("---")
 
-st.sidebar.write(f"**Device:** {device}")
-
-st.sidebar.write(f"**Descriptors:** {len(feature_order)}")
-
-st.sidebar.write("**Model:** Hybrid GNN")
-
-st.sidebar.write("**Graph Network:** GAT + GraphSAGE")
-
-st.sidebar.markdown("---")
-
-mode = st.sidebar.radio(
-
-    "Prediction Mode",
+tab1, tab2 = st.tabs(
 
     [
 
-        "Single Prediction",
+        "🧪 Single Prediction",
 
-        "Batch Prediction"
+        "📂 Batch Prediction"
 
     ]
 
 )
 
 # ==========================================================
-# SINGLE PREDICTION
+# TAB 1
 # ==========================================================
 
-if mode == "Single Prediction":
+with tab1:
 
-    st.header("Single Prediction")
+    st.subheader("Single Prediction")
 
     col1, col2 = st.columns(2)
 
@@ -499,7 +560,7 @@ if mode == "Single Prediction":
 
             "Solute SMILES",
 
-            "CCO"
+            placeholder="Example: CCO"
 
         )
 
@@ -509,51 +570,55 @@ if mode == "Single Prediction":
 
             "Solvent SMILES",
 
-            "O"
+            placeholder="Example: O"
 
         )
 
-    st.markdown("---")
+    st.write("")
 
-    img1, img2 = st.columns(2)
+    predict_btn = st.button(
 
-    with img1:
+        "Predict ΔG",
 
-        st.write("### Solute")
+        use_container_width=True
 
-        img = molecule_image(solute)
+    )
 
-        if img is not None:
+    if predict_btn:
 
-            st.image(img)
+        if solute == "" or solvent == "":
 
-    with img2:
+            st.warning(
 
-        st.write("### Solvent")
+                "Please enter both SMILES."
 
-        img = molecule_image(solvent)
+            )
 
-        if img is not None:
+        elif not valid_smiles(solute):
 
-            st.image(img)
+            st.error(
 
-    st.markdown("---")
+                "Invalid Solute SMILES"
 
-    if st.button("Predict ΔG", use_container_width=True):
-
-        if not valid_smiles(solute):
-
-            st.error("Invalid Solute SMILES")
+            )
 
         elif not valid_smiles(solvent):
 
-            st.error("Invalid Solvent SMILES")
+            st.error(
+
+                "Invalid Solvent SMILES"
+
+            )
 
         else:
 
-            with st.spinner("Generating descriptors and predicting..."):
+            with st.spinner(
 
-                pred = predict_deltaG(
+                "Running Hybrid GNN..."
+
+            ):
+
+                prediction = predict_deltaG(
 
                     solute,
 
@@ -561,109 +626,174 @@ if mode == "Single Prediction":
 
                 )
 
-            if pred is not None:
+            if prediction is not None:
 
-                st.success("Prediction Complete")
+                st.success(
+
+                    "Prediction Completed"
+
+                )
 
                 st.metric(
 
                     "Predicted ΔG",
 
-                    f"{pred:.4f}"
+                    f"{prediction:.4f}"
 
                 )
 
 # ==========================================================
-# BATCH PREDICTION
+# TAB 2
 # ==========================================================
 
-else:
+with tab2:
 
-    st.header("Batch Prediction")
+    st.subheader("Batch Prediction")
+
+    st.info(
+
+        """
+CSV must contain two columns
+
+• mol_solute
+
+• mol_solvent
+"""
+    )
 
     uploaded = st.file_uploader(
 
         "Upload CSV",
 
-        type=["csv"]
-
-    )
-
-    st.info(
-
-        "Required columns:\n"
-
-        "• mol_solute\n"
-
-        "• mol_solvent"
+        type="csv"
 
     )
 
     if uploaded is not None:
 
-        df = pd.read_csv(uploaded)
+        df = pd.read_csv(
 
-        st.write(df.head())
+            uploaded
 
-        if st.button(
+        )
 
-            "Run Batch Prediction",
+        st.write("Preview")
 
-            use_container_width=True
+        st.dataframe(
 
-        ):
+            df.head()
 
-            predictions = []
+        )
 
-            progress = st.progress(0)
+        valid, missing = validate_csv(df)
 
-            total = len(df)
+        if not valid:
 
-            for i, row in enumerate(df.itertuples()):
+            st.error(
 
-                solute = str(row.mol_solute)
-
-                solvent = str(row.mol_solvent)
-
-                pred = predict_deltaG(
-
-                    solute,
-
-                    solvent
-
-                )
-
-                predictions.append(pred)
-
-                progress.progress(
-
-                    (i + 1) / total
-
-                )
-
-            df["Predicted_DeltaG"] = predictions
-
-            st.success("Prediction Finished")
-
-            st.dataframe(df)
-
-            csv = df.to_csv(
-
-                index=False
-
-            ).encode("utf-8")
-
-            st.download_button(
-
-                "Download Predictions",
-
-                csv,
-
-                "predictions.csv",
-
-                "text/csv"
+                f"Missing Columns: {missing}"
 
             )
+
+        else:
+
+            if st.button(
+
+                "Run Batch Prediction",
+
+                use_container_width=True
+
+            ):
+
+                with st.spinner(
+
+                    "Predicting..."
+
+                ):
+
+                    result_df = batch_predict(
+
+                        df.copy()
+
+                    )
+
+                st.success(
+
+                    "Prediction Finished"
+
+                )
+
+                st.dataframe(
+
+                    result_df
+
+                )
+
+                csv = result_df.to_csv(
+
+                    index=False
+
+                ).encode(
+
+                    "utf-8"
+
+                )
+
+                st.download_button(
+
+                    label="Download Prediction CSV",
+
+                    data=csv,
+
+                    file_name="Predictions.csv",
+
+                    mime="text/csv"
+
+                )
+
+# ==========================================================
+# SIDEBAR
+# ==========================================================
+
+st.sidebar.markdown("---")
+
+st.sidebar.header(
+
+    "Model"
+
+)
+
+st.sidebar.write(
+
+    "Hybrid GNN"
+
+)
+
+st.sidebar.write(
+
+    "GAT + GraphSAGE"
+
+)
+
+st.sidebar.write(
+
+    f"Descriptors: {len(feature_order)}"
+
+)
+
+st.sidebar.write(
+
+    f"Device: {device}"
+
+)
+
+st.sidebar.markdown("---")
+
+st.sidebar.success(
+
+    "Ready for Prediction"
+
+)
 
 # ==========================================================
 # FOOTER
@@ -673,6 +803,5 @@ st.markdown("---")
 
 st.caption(
 
-    "Hybrid GNN for Solvation Free Energy Prediction"
-
+    "Hybrid GNN Solvation Free Energy Prediction"
 )
