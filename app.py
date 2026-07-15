@@ -419,54 +419,72 @@ def predict_deltaG(
 
         )
 
-        # -----------------------------------------
-        # Prediction
-        # -----------------------------------------
-
-        with torch.no_grad():
-
-            if device.type == "cuda":
-
-                with torch.amp.autocast("cuda"):
-
-                    pred = model(
-
-                        g1,
-
-                        g2,
-
-                        X
-
-                    )
-
-            else:
-
-                pred = model(
-
-                    g1,
-
-                    g2,
-
-                    X
-
+        # ==========================================================
+        # RUN PREDICTION
+        # ==========================================================
+        
+        predictions = []
+        
+        progress = st.progress(0)
+        
+        total = len(df)
+        
+        # Convert selected columns to string
+        solute_list = (
+        
+            df[solute_col]
+        
+            .fillna("")
+        
+            .astype(str)
+        
+            .tolist()
+        
+        )
+        
+        solvent_list = (
+        
+            df[solvent_col]
+        
+            .fillna("")
+        
+            .astype(str)
+        
+            .tolist()
+        
+        )
+        
+        for i, (solute, solvent) in enumerate(
+        
+            zip(solute_list, solvent_list)
+        
+        ):
+        
+            try:
+        
+                pred = predict_deltaG(
+        
+                    solute.strip(),
+        
+                    solvent.strip()
+        
                 )
-
-        return float(
-
-            pred.squeeze().cpu().item()
-
-        )
-
-    except Exception as e:
-
-        st.error(
-
-            f"Prediction Error: {e}"
-
-        )
-
-        return None
-
+        
+            except Exception:
+        
+                pred = np.nan
+        
+            predictions.append(pred)
+        
+            progress.progress(
+        
+                (i + 1) / total
+        
+            )
+        
+        result_df = df.copy()
+        
+        result_df["Predicted_DeltaG"] = predictions
 
 # ==========================================================
 # CSV VALIDATION
@@ -784,118 +802,125 @@ with tab2:
 
             if actual_col != "None":
 
-                actual = pd.to_numeric(
+    actual = pd.to_numeric(
 
-                    result_df[actual_col],
+        result_df[actual_col],
 
-                    errors="coerce"
+        errors="coerce"
 
-                )
+    )
 
-                predicted = pd.to_numeric(
+    predicted = pd.to_numeric(
 
-                    result_df["Predicted_DeltaG"],
+        result_df["Predicted_DeltaG"],
 
-                    errors="coerce"
+        errors="coerce"
 
-                )
+    )
 
-                mask = actual.notna() & predicted.notna()
+    valid = actual.notna() & predicted.notna()
 
-                actual = actual[mask]
+    actual = actual[valid]
 
-                predicted = predicted[mask]
+    predicted = predicted[valid]
 
-                if len(actual) > 0:
+    if len(actual) > 1:
 
-                    from sklearn.metrics import (
+        rmse = np.sqrt(
 
-                        r2_score,
+            mean_squared_error(
 
-                        mean_squared_error,
+                actual,
 
-                        mean_absolute_error
+                predicted
 
-                    )
+            )
 
-                    rmse = np.sqrt(
+        )
 
-                        mean_squared_error(
+        mae = mean_absolute_error(
 
-                            actual,
+            actual,
 
-                            predicted
+            predicted
 
-                        )
+        )
 
-                    )
+        r2 = r2_score(
 
-                    mae = mean_absolute_error(
+            actual,
 
-                        actual,
+            predicted
 
-                        predicted
+        )
 
-                    )
+        st.success("Evaluation Completed")
 
-                    r2 = r2_score(
+        c1, c2, c3 = st.columns(3)
 
-                        actual,
+        c1.metric("RMSE", f"{rmse:.4f}")
 
-                        predicted
+        c2.metric("MAE", f"{mae:.4f}")
 
-                    )
+        c3.metric("R²", f"{r2:.4f}")
 
-                    st.markdown("---")
+        fig, ax = plt.subplots(figsize=(6,6))
 
-                    st.subheader("Evaluation")
+        ax.scatter(
 
-                    c1, c2, c3 = st.columns(3)
+            actual,
 
-                    c1.metric("RMSE", f"{rmse:.4f}")
+            predicted,
 
-                    c2.metric("MAE", f"{mae:.4f}")
+            alpha=0.6
 
-                    c3.metric("R²", f"{r2:.4f}")
+        )
 
-                    fig, ax = plt.subplots(figsize=(6,6))
+        mn = min(
 
-                    ax.scatter(
+            actual.min(),
 
-                        actual,
+            predicted.min()
 
-                        predicted,
+        )
 
-                        alpha=0.6
+        mx = max(
 
-                    )
+            actual.max(),
 
-                    mn = min(actual.min(), predicted.min())
+            predicted.max()
 
-                    mx = max(actual.max(), predicted.max())
+        )
 
-                    ax.plot(
+        ax.plot(
 
-                        [mn, mx],
+            [mn, mx],
 
-                        [mn, mx],
+            [mn, mx],
 
-                        "r--"
+            "r--",
 
-                    )
+            linewidth=2
 
-                    ax.set_xlabel("Actual ΔG")
+        )
 
-                    ax.set_ylabel("Predicted ΔG")
+        ax.set_xlabel("Actual ΔG")
 
-                    ax.set_title(
+        ax.set_ylabel("Predicted ΔG")
 
-                        f"True vs Predicted (R²={r2:.4f})"
+        ax.set_title("True vs Predicted")
 
-                    )
+        ax.grid(True)
 
-                    st.pyplot(fig)
+        st.pyplot(fig)
 
+    else:
+
+        st.warning(
+
+            "Not enough valid values to calculate metrics."
+
+        )
 # ==========================================================
 # SIDEBAR
 # ==========================================================
