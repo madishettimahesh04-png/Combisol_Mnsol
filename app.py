@@ -21,6 +21,14 @@ from torch_geometric.data import Batch
 from model import Model
 from feature_generator import build_features
 
+import matplotlib.pyplot as plt
+
+from sklearn.metrics import (
+    r2_score,
+    mean_squared_error,
+    mean_absolute_error
+)
+
 
 # ==========================================================
 # PAGE CONFIG
@@ -650,106 +658,243 @@ with tab2:
 
     st.subheader("Batch Prediction")
 
-    st.info(
-
-        """
-CSV must contain two columns
-
-• mol_solute
-
-• mol_solvent
-"""
-    )
-
     uploaded = st.file_uploader(
 
-        "Upload CSV",
+        "Upload CSV File",
 
-        type="csv"
+        type=["csv"]
 
     )
 
     if uploaded is not None:
 
-        df = pd.read_csv(
+        df = pd.read_csv(uploaded)
 
-            uploaded
+        st.success(f"Dataset Loaded ({len(df)} rows)")
+
+        st.dataframe(df.head())
+
+        st.markdown("---")
+
+        # ======================================================
+        # COLUMN SELECTION
+        # ======================================================
+
+        columns = list(df.columns)
+
+        solute_col = st.selectbox(
+
+            "Select Solute SMILES Column",
+
+            columns
 
         )
 
-        st.write("Preview")
+        solvent_col = st.selectbox(
 
-        st.dataframe(
+            "Select Solvent SMILES Column",
 
-            df.head()
+            columns
 
         )
 
-        valid, missing = validate_csv(df)
+        actual_col = st.selectbox(
 
-        if not valid:
+            "Actual ΔG Column (Optional)",
 
-            st.error(
+            ["None"] + columns
 
-                f"Missing Columns: {missing}"
+        )
+
+        st.markdown("---")
+
+        if st.button(
+
+            "Run Batch Prediction",
+
+            use_container_width=True
+
+        ):
+
+            predictions = []
+
+            progress = st.progress(0)
+
+            total = len(df)
+
+            for i, row in enumerate(df.itertuples(index=False)):
+
+                solute = str(
+
+                    getattr(row, solute_col)
+
+                )
+
+                solvent = str(
+
+                    getattr(row, solvent_col)
+
+                )
+
+                pred = predict_deltaG(
+
+                    solute,
+
+                    solvent
+
+                )
+
+                predictions.append(pred)
+
+                progress.progress(
+
+                    (i + 1) / total
+
+                )
+
+            result_df = df.copy()
+
+            result_df["Predicted_DeltaG"] = predictions
+
+            st.success("Prediction Completed")
+
+            st.dataframe(result_df)
+
+            csv = result_df.to_csv(
+
+                index=False
+
+            ).encode("utf-8")
+
+            st.download_button(
+
+                "Download Predictions",
+
+                csv,
+
+                "Predictions.csv",
+
+                "text/csv"
 
             )
 
-        else:
+            # ==================================================
+            # OPTIONAL TRUE VS PREDICTED
+            # ==================================================
 
-            if st.button(
+            if actual_col != "None":
 
-                "Run Batch Prediction",
+                actual = pd.to_numeric(
 
-                use_container_width=True
+                    result_df[actual_col],
 
-            ):
+                    errors="coerce"
 
-                with st.spinner(
+                )
 
-                    "Predicting..."
+                predicted = pd.to_numeric(
 
-                ):
+                    result_df["Predicted_DeltaG"],
 
-                    result_df = batch_predict(
+                    errors="coerce"
 
-                        df.copy()
+                )
+
+                mask = actual.notna() & predicted.notna()
+
+                actual = actual[mask]
+
+                predicted = predicted[mask]
+
+                if len(actual) > 0:
+
+                    from sklearn.metrics import (
+
+                        r2_score,
+
+                        mean_squared_error,
+
+                        mean_absolute_error
 
                     )
 
-                st.success(
+                    rmse = np.sqrt(
 
-                    "Prediction Finished"
+                        mean_squared_error(
 
-                )
+                            actual,
 
-                st.dataframe(
+                            predicted
 
-                    result_df
+                        )
 
-                )
+                    )
 
-                csv = result_df.to_csv(
+                    mae = mean_absolute_error(
 
-                    index=False
+                        actual,
 
-                ).encode(
+                        predicted
 
-                    "utf-8"
+                    )
 
-                )
+                    r2 = r2_score(
 
-                st.download_button(
+                        actual,
 
-                    label="Download Prediction CSV",
+                        predicted
 
-                    data=csv,
+                    )
 
-                    file_name="Predictions.csv",
+                    st.markdown("---")
 
-                    mime="text/csv"
+                    st.subheader("Evaluation")
 
-                )
+                    c1, c2, c3 = st.columns(3)
+
+                    c1.metric("RMSE", f"{rmse:.4f}")
+
+                    c2.metric("MAE", f"{mae:.4f}")
+
+                    c3.metric("R²", f"{r2:.4f}")
+
+                    fig, ax = plt.subplots(figsize=(6,6))
+
+                    ax.scatter(
+
+                        actual,
+
+                        predicted,
+
+                        alpha=0.6
+
+                    )
+
+                    mn = min(actual.min(), predicted.min())
+
+                    mx = max(actual.max(), predicted.max())
+
+                    ax.plot(
+
+                        [mn, mx],
+
+                        [mn, mx],
+
+                        "r--"
+
+                    )
+
+                    ax.set_xlabel("Actual ΔG")
+
+                    ax.set_ylabel("Predicted ΔG")
+
+                    ax.set_title(
+
+                        f"True vs Predicted (R²={r2:.4f})"
+
+                    )
+
+                    st.pyplot(fig)
 
 # ==========================================================
 # SIDEBAR
