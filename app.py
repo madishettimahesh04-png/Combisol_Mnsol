@@ -367,6 +367,10 @@ def prepare_features(
 # PREDICTION
 # ==========================================================
 
+# ==========================================================
+# PREDICTION
+# ==========================================================
+
 def predict_deltaG(
 
     solute_smiles,
@@ -419,72 +423,53 @@ def predict_deltaG(
 
         )
 
-        # ==========================================================
-        # RUN PREDICTION
-        # ==========================================================
-        
-        predictions = []
-        
-        progress = st.progress(0)
-        
-        total = len(df)
-        
-        # Convert selected columns to string
-        solute_list = (
-        
-            df[solute_col]
-        
-            .fillna("")
-        
-            .astype(str)
-        
-            .tolist()
-        
-        )
-        
-        solvent_list = (
-        
-            df[solvent_col]
-        
-            .fillna("")
-        
-            .astype(str)
-        
-            .tolist()
-        
-        )
-        
-        for i, (solute, solvent) in enumerate(
-        
-            zip(solute_list, solvent_list)
-        
-        ):
-        
-            try:
-        
-                pred = predict_deltaG(
-        
-                    solute.strip(),
-        
-                    solvent.strip()
-        
+        # -----------------------------------------
+        # Prediction
+        # -----------------------------------------
+
+        with torch.no_grad():
+
+            if device.type == "cuda":
+
+                with torch.amp.autocast("cuda"):
+
+                    pred = model(
+
+                        g1,
+
+                        g2,
+
+                        X
+
+                    )
+
+            else:
+
+                pred = model(
+
+                    g1,
+
+                    g2,
+
+                    X
+
                 )
-        
-            except Exception:
-        
-                pred = np.nan
-        
-            predictions.append(pred)
-        
-            progress.progress(
-        
-                (i + 1) / total
-        
-            )
-        
-        result_df = df.copy()
-        
-        result_df["Predicted_DeltaG"] = predictions
+
+        return float(
+
+            pred.squeeze().cpu().item()
+
+        )
+
+    except Exception as e:
+
+        st.error(
+
+            f"Prediction Error: {e}"
+
+        )
+
+        return None
 
 # ==========================================================
 # CSV VALIDATION
