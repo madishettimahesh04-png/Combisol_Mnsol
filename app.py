@@ -656,67 +656,61 @@ with tab1:
 # ==========================================================
 # TAB 2
 # ==========================================================
+# ==========================================================
+# TAB 2
+# ==========================================================
 
 with tab2:
 
     st.subheader("Batch Prediction")
 
     uploaded = st.file_uploader(
-
-        "Upload CSV File",
-
+        "Upload CSV",
         type=["csv"]
-
     )
 
     if uploaded is not None:
 
         df = pd.read_csv(uploaded)
 
-        st.success(f"Dataset Loaded ({len(df)} rows)")
+        st.success(f"Dataset Loaded Successfully ({len(df)} rows)")
 
         st.dataframe(df.head())
 
-        st.markdown("---")
+        columns = df.columns.tolist()
 
-        # ======================================================
-        # COLUMN SELECTION
-        # ======================================================
+        st.markdown("### Select Columns")
 
-        columns = list(df.columns)
+        col1, col2, col3 = st.columns(3)
 
-        solute_col = st.selectbox(
+        with col1:
 
-            "Select Solute SMILES Column",
+            solute_col = st.selectbox(
+                "Solute SMILES Column",
+                columns
+            )
 
-            columns
+        with col2:
 
-        )
+            solvent_col = st.selectbox(
+                "Solvent SMILES Column",
+                columns
+            )
 
-        solvent_col = st.selectbox(
+        with col3:
 
-            "Select Solvent SMILES Column",
+            actual_options = ["None"] + columns
 
-            columns
-
-        )
-
-        actual_col = st.selectbox(
-
-            "Actual ΔG Column (Optional)",
-
-            ["None"] + columns
-
-        )
+            actual_col = st.selectbox(
+                "Actual ΔG Column (Optional)",
+                actual_options
+            )
 
         st.markdown("---")
 
         if st.button(
-
             "Run Batch Prediction",
-
             use_container_width=True
-
         ):
 
             predictions = []
@@ -725,34 +719,39 @@ with tab2:
 
             total = len(df)
 
-            for i, row in enumerate(df.itertuples(index=False)):
+            solute_list = (
+                df[solute_col]
+                .fillna("")
+                .astype(str)
+                .tolist()
+            )
 
-                solute = str(
+            solvent_list = (
+                df[solvent_col]
+                .fillna("")
+                .astype(str)
+                .tolist()
+            )
 
-                    getattr(row, solute_col)
+            for i, (solute, solvent) in enumerate(
+                zip(solute_list, solvent_list)
+            ):
 
-                )
+                try:
 
-                solvent = str(
+                    pred = predict_deltaG(
+                        solute.strip(),
+                        solvent.strip()
+                    )
 
-                    getattr(row, solvent_col)
+                except Exception:
 
-                )
-
-                pred = predict_deltaG(
-
-                    solute,
-
-                    solvent
-
-                )
+                    pred = np.nan
 
                 predictions.append(pred)
 
                 progress.progress(
-
                     (i + 1) / total
-
                 )
 
             result_df = df.copy()
@@ -764,94 +763,118 @@ with tab2:
             st.dataframe(result_df)
 
             csv = result_df.to_csv(
-
                 index=False
-
             ).encode("utf-8")
 
             st.download_button(
-
-                "Download Predictions",
-
+                "Download Prediction CSV",
                 csv,
-
                 "Predictions.csv",
-
                 "text/csv"
-
             )
 
-# ==================================================
-# OPTIONAL TRUE VS PREDICTED
-# ==================================================
+            # ======================================================
+            # EVALUATION
+            # ======================================================
 
-if actual_col != "None":
+            if actual_col != "None":
 
-    actual = pd.to_numeric(
-        result_df[actual_col],
-        errors="coerce"
-    )
+                actual = pd.to_numeric(
+                    result_df[actual_col],
+                    errors="coerce"
+                )
 
-    predicted = pd.to_numeric(
-        result_df["Predicted_DeltaG"],
-        errors="coerce"
-    )
+                predicted = pd.to_numeric(
+                    result_df["Predicted_DeltaG"],
+                    errors="coerce"
+                )
 
-    valid = actual.notna() & predicted.notna()
+                mask = actual.notna() & predicted.notna()
 
-    actual = actual[valid]
-    predicted = predicted[valid]
+                actual = actual[mask]
 
-    if len(actual) > 1:
+                predicted = predicted[mask]
 
-        rmse = np.sqrt(
-            mean_squared_error(actual, predicted)
-        )
+                if len(actual) > 1:
 
-        mae = mean_absolute_error(
-            actual,
-            predicted
-        )
+                    rmse = np.sqrt(
+                        mean_squared_error(
+                            actual,
+                            predicted
+                        )
+                    )
 
-        r2 = r2_score(
-            actual,
-            predicted
-        )
+                    mae = mean_absolute_error(
+                        actual,
+                        predicted
+                    )
 
-        st.success("Evaluation Completed")
+                    r2 = r2_score(
+                        actual,
+                        predicted
+                    )
 
-        c1, c2, c3 = st.columns(3)
+                    st.markdown("---")
 
-        c1.metric("RMSE", f"{rmse:.4f}")
-        c2.metric("MAE", f"{mae:.4f}")
-        c3.metric("R²", f"{r2:.4f}")
+                    st.subheader("Model Evaluation")
 
-        fig, ax = plt.subplots(figsize=(6, 6))
+                    c1, c2, c3 = st.columns(3)
 
-        ax.scatter(actual, predicted, alpha=0.6)
+                    c1.metric(
+                        "RMSE",
+                        f"{rmse:.4f}"
+                    )
 
-        mn = min(actual.min(), predicted.min())
-        mx = max(actual.max(), predicted.max())
+                    c2.metric(
+                        "MAE",
+                        f"{mae:.4f}"
+                    )
 
-        ax.plot(
-            [mn, mx],
-            [mn, mx],
-            "r--",
-            linewidth=2
-        )
+                    c3.metric(
+                        "R²",
+                        f"{r2:.4f}"
+                    )
 
-        ax.set_xlabel("Actual ΔG")
-        ax.set_ylabel("Predicted ΔG")
-        ax.set_title(f"True vs Predicted (R²={r2:.4f})")
-        ax.grid(True)
+                    fig, ax = plt.subplots(figsize=(6,6))
 
-        st.pyplot(fig)
+                    ax.scatter(
+                        actual,
+                        predicted,
+                        alpha=0.6
+                    )
 
-    else:
+                    mn = min(
+                        actual.min(),
+                        predicted.min()
+                    )
 
-        st.warning(
-            "Not enough valid values to calculate metrics."
-        )
+                    mx = max(
+                        actual.max(),
+                        predicted.max()
+                    )
+
+                    ax.plot(
+                        [mn, mx],
+                        [mn, mx],
+                        "r--",
+                        linewidth=2
+                    )
+
+                    ax.set_xlabel("Actual ΔG")
+
+                    ax.set_ylabel("Predicted ΔG")
+
+                    ax.set_title("Actual vs Predicted")
+
+                    ax.grid(True)
+
+                    st.pyplot(fig)
+
+                else:
+
+                    st.warning(
+                        "Not enough valid values to calculate metrics."
+                    )
 # ==========================================================
 # SIDEBAR
 # ==========================================================
