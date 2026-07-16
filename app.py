@@ -781,62 +781,41 @@ with tab2:
 
             )
 
-            # ==================================================
-            # OPTIONAL TRUE VS PREDICTED
-            # ==================================================
+# ==================================================
+# OPTIONAL TRUE VS PREDICTED
+# ==================================================
 
-            if actual_col != "None":
+if actual_col != "None":
 
     actual = pd.to_numeric(
-
         result_df[actual_col],
-
         errors="coerce"
-
     )
 
     predicted = pd.to_numeric(
-
         result_df["Predicted_DeltaG"],
-
         errors="coerce"
-
     )
 
     valid = actual.notna() & predicted.notna()
 
     actual = actual[valid]
-
     predicted = predicted[valid]
 
     if len(actual) > 1:
 
         rmse = np.sqrt(
-
-            mean_squared_error(
-
-                actual,
-
-                predicted
-
-            )
-
+            mean_squared_error(actual, predicted)
         )
 
         mae = mean_absolute_error(
-
             actual,
-
             predicted
-
         )
 
         r2 = r2_score(
-
             actual,
-
             predicted
-
         )
 
         st.success("Evaluation Completed")
@@ -844,57 +823,26 @@ with tab2:
         c1, c2, c3 = st.columns(3)
 
         c1.metric("RMSE", f"{rmse:.4f}")
-
         c2.metric("MAE", f"{mae:.4f}")
-
         c3.metric("R²", f"{r2:.4f}")
 
-        fig, ax = plt.subplots(figsize=(6,6))
+        fig, ax = plt.subplots(figsize=(6, 6))
 
-        ax.scatter(
+        ax.scatter(actual, predicted, alpha=0.6)
 
-            actual,
-
-            predicted,
-
-            alpha=0.6
-
-        )
-
-        mn = min(
-
-            actual.min(),
-
-            predicted.min()
-
-        )
-
-        mx = max(
-
-            actual.max(),
-
-            predicted.max()
-
-        )
+        mn = min(actual.min(), predicted.min())
+        mx = max(actual.max(), predicted.max())
 
         ax.plot(
-
             [mn, mx],
-
             [mn, mx],
-
             "r--",
-
             linewidth=2
-
         )
 
         ax.set_xlabel("Actual ΔG")
-
         ax.set_ylabel("Predicted ΔG")
-
-        ax.set_title("True vs Predicted")
-
+        ax.set_title(f"True vs Predicted (R²={r2:.4f})")
         ax.grid(True)
 
         st.pyplot(fig)
@@ -902,9 +850,7 @@ with tab2:
     else:
 
         st.warning(
-
             "Not enough valid values to calculate metrics."
-
         )
 # ==========================================================
 # SIDEBAR
